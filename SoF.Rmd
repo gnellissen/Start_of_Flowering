@@ -1,0 +1,87 @@
+```{r, include = F}
+#Import statements
+library(tidyverse) #For pipes
+library(lubridate) #For date objects
+library(readxl) #For reading excel files
+library(writexl) #For writing to excel files
+library(utils) #For progress bar
+
+#Load vaatplanten GROOT BESTAND!
+plant_df = read_csv2("obs_vaatplanten.csv")
+plant_df_full = read_lines("obs_vaatplanten.txt")
+
+```
+
+```{r}
+#Load functions
+source("functions_SoF.R")
+a <- Sys.time()
+#Species list
+species_list <- c("Galanthus nivalis", "Alopecurus pratensis", "Ficaria verna", "Cerastium arvense", "Anemone nemorosa", "Caltha palustris", "Glechoma hederacea", "Cardamine pratensis", "Anthriscus sylvestris", "Alliaria petiolata", "Cytisus scoparius", "Erica tetralix", "Daucus carota", "Calluna vulgaris")
+
+result_df <- start_of_flowering(plant_df,species_list = species_list, rm_EP = TRUE, plot_per_year = F, flowering_threshold = 0.75)
+result_df
+
+print(Sys.time()-a)
+```
+
+```{r}
+source("weather_function.R")
+
+weather_df <- weather_data()
+
+#Add cumulative temperature sum (since jan 1) at start of flowering
+result_df %>% 
+ mutate(cumTG = weather_df[match(.$date, weather_df$date), "cumTG"]) %>% 
+ mutate(cumTGdiff = weather_df[match(.$date, weather_df$date), "cumTGdiff"]) %>%
+ mutate(cumQ = weather_df[match(.$date, weather_df$date), "cumQ"]) %>% 
+ mutate(cumQdiff = weather_df[match(.$date, weather_df$date), "cumQdiff"]) %>% 
+ mutate(cumRH = weather_df[match(.$date, weather_df$date), "cumRH"]) %>% 
+ mutate(cumRHdiff = weather_df[match(.$date, weather_df$date), "cumRHdiff"])-> result_df
+
+
+```
+
+```{r}
+#Median for all years possible
+result_df %>%
+  filter(species %in% species_list) %>% 
+  group_by(species) %>% 
+  summarise(median = round(median(start_of_flowering), digits = 0), sd = round(sd(start_of_flowering),digits = 1), years = length(unique(jaar))) %>%
+  mutate(sd = if_else(is.na(sd), 0, sd)) %>% 
+  arrange(median) -> df_all
+
+df_all %>% 
+  setNames(c("Species", "sof","sd", "years")) %>%
+  mutate(sof_b = c(52, 90, 95, 103, 107, 109, 121, 119, 130, 122, 131, 176, 180, 215)) %>% #Add previous sof
+  arrange(.[,2]) -> result
+
+print(result)
+```
+```{r}
+adj_r2 <- c()
+pvals <- c()
+for (soort in species_list){
+print(soort)
+#Creating a model to compare correlation between start_of_flowering and temperature and radiation
+result_df %>%
+  filter(jaar > 2005) %>% 
+  filter(species == soort) %>% 
+  mutate(sof_diff = start_of_flowering - mean(start_of_flowering)) -> model_df
+
+model <- lm(sof_diff ~ cumTGdiff, data = model_df)
+summary <- summary(model)
+adj_r2 <- c(adj_r2, summary$adj.r.squared) #Retrieve R2 adjusted
+pvals <- c(pvals, summary$coefficients[2,4]) #Retrieve p-value for Temperature
+print(summary)
+plot(x = model_df$sof_diff, y = model_df$cumTGdiff, main = soort)
+}
+```
+```{r}
+#Add p values and adjusted R2 to the results
+result %>% 
+  mutate(p_vals = round(pvals,digits = 3)) %>% 
+  mutate(r_2_adj = round(adj_r2, digits = 3))
+
+```
+
